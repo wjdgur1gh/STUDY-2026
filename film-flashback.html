@@ -253,10 +253,20 @@ function roundRectPath(g, x, y, w, h, r) {
   g.lineTo(x + r, y + h); g.arcTo(x, y + h, x, y + h - r, r);
   g.lineTo(x, y + r); g.arcTo(x, y, x + r, y, r); g.closePath();
 }
-function download(blob, name) {
+async function download(blob, name) {
+  // claude.ai 아티팩트로 열렸을 때는 뷰어의 저장 확인창을 거쳐 저장하고, 보통 브라우저에서는 바로 내려받기
+  let saver = null;
+  if (window.claude && typeof window.claude.use === 'function') {
+    try { saver = await window.claude.use('downloads'); } catch (err) { saver = null; }
+  }
+  if (saver) {
+    try { await saver.save({ filename: name, data: blob }); return 'saved'; }
+    catch (err) { return err && err.code === 'declined' ? 'declined' : 'failed'; }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return 'saved';
 }
 
 // ---------- 샘플 장면 (캔버스로 그린 그림)
@@ -763,12 +773,15 @@ recordBtn.addEventListener('click', () => {
   const chunks = [];
   const r = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16_000_000 });
   r.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
-  r.onstop = () => {
+  r.onstop = async () => {
     const ext = mime.includes('mp4') ? 'mp4' : 'webm';
-    download(new Blob(chunks, { type: mime }), `film-flashback-${state.w}x${state.h}.${ext}`);
     rec = null; recordBtn.textContent = '● 영상으로 내보내기';
-    statusEl.textContent = ext === 'mp4' ? 'MP4로 저장했어요. 다운로드 폴더를 확인해 주세요.' : 'WebM으로 저장했어요. 프리미어·다빈치에서 안 읽히면 MP4로 변환해 주세요.';
     setPlaying(true);
+    statusEl.textContent = '녹화한 영상을 저장하는 중…';
+    const result = await download(new Blob(chunks, { type: mime }), `film-flashback-${state.w}x${state.h}.${ext}`);
+    if (result === 'declined') statusEl.textContent = '저장을 취소했어요.';
+    else if (result === 'failed') statusEl.textContent = '저장하지 못했어요. 다시 시도해 주세요.';
+    else statusEl.textContent = ext === 'mp4' ? 'MP4로 저장했어요. 다운로드 폴더를 확인해 주세요.' : 'WebM으로 저장했어요. 프리미어·다빈치에서 안 읽히면 MP4로 변환해 주세요.';
   };
   rec = r;
   state.t = 0;
@@ -784,8 +797,12 @@ $('#overlayBtn').addEventListener('click', () => {
   const g = c.getContext('2d');
   drawVignette(g, geo);
   drawRails(g, geo, 0, mulberry32(1));
-  c.toBlob((b) => { if (b) download(b, `film-overlay-${geo.W}x${geo.H}.png`); }, 'image/png');
-  statusEl.textContent = '오버레이 PNG를 저장했어요.';
+  statusEl.textContent = '오버레이 PNG를 만드는 중…';
+  c.toBlob(async (b) => {
+    if (!b) { statusEl.textContent = 'PNG를 만들지 못했어요.'; return; }
+    const result = await download(b, `film-overlay-${geo.W}x${geo.H}.png`);
+    statusEl.textContent = result === 'saved' ? '오버레이 PNG를 저장했어요.' : result === 'declined' ? '저장을 취소했어요.' : '저장하지 못했어요. 다시 시도해 주세요.';
+  }, 'image/png');
 });
 
 // ---------- 시작
