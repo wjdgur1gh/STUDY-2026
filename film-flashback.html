@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>필름 회상 트랜지션</title>
+<meta name="description" content="옛날 필름이 위로 넘어가며 회상 장면으로 전환되는 효과를 미리 보고 WebM으로 내보내는 도구">
+<style>
+  :root {
+    --bg: #141210;
+    --panel: #1d1a17;
+    --panel-2: #272320;
+    --line: #3a332d;
+    --text: #f1e9df;
+    --muted: #a69a8c;
+    --accent: #e9a44a;
+    --accent-ink: #1a1208;
+    --danger: #d9694a;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", Pretendard, "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header { max-width: 1500px; margin: 0 auto; padding: 22px 20px 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { margin: 0; color: var(--muted); }
+  .app {
+    max-width: 1500px; margin: 0 auto; padding: 16px 20px 40px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start;
+  }
+  @media (max-width: 960px) { .app { grid-template-columns: 1fr; } }
+
+  .stage { background: #000; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .stage canvas { display: block; width: 100%; height: auto; margin: 0 auto; background: #000; }
+  .transport {
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    background: var(--panel); border-top: 1px solid var(--line);
+  }
+  .transport button { white-space: nowrap; flex-shrink: 0; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .status { margin-left: auto; font-size: 12px; color: var(--muted); text-align: right; }
+
+  button {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.primary:disabled { opacity: 0.5; cursor: default; }
+  button.iconbtn { padding: 4px 8px; font-size: 12px; }
+  button.wide { width: 100%; margin-top: 6px; }
+
+  .panel { display: flex; flex-direction: column; gap: 14px; }
+  fieldset { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 10px 14px 14px; margin: 0; min-width: 0; }
+  legend { padding: 0 6px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; }
+  .row { display: grid; grid-template-columns: 84px 1fr 58px; align-items: center; gap: 10px; font-size: 13px; margin: 8px 0; }
+  .row label { color: var(--text); }
+  .row output { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .row.wide-field { grid-template-columns: 84px 1fr; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  select {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; width: 100%;
+  }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 8px 0 0; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 6px 4px; font-size: 13px; }
+  .seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+  .scenes { list-style: none; margin: 4px 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .scene { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: var(--panel-2); border-radius: 8px; padding: 6px; }
+  .scene canvas { width: 72px; height: 40px; border-radius: 4px; background: #000; display: block; }
+  .scene .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene .tag { font-size: 11px; color: var(--muted); }
+  .scene .btns { display: flex; gap: 4px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 4px; }
+  .filebtn { position: relative; overflow: hidden; }
+  .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .tip { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 10px 0 0; }
+  .tip b { color: var(--text); font-weight: 600; }
+  .howto { max-width: 1500px; margin: 0 auto; padding: 0 20px 48px; color: var(--muted); font-size: 13px; }
+  .howto h2 { font-size: 14px; color: var(--text); margin: 0 0 6px; }
+  .howto ol { margin: 0; padding-left: 20px; }
+  .howto li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>필름 회상 트랜지션</h1>
+  <p class="sub">옛날 필름이 위로 지나가면서 회상 장면으로 넘어가는 효과. 장면을 넣고, 재생해 보고, 영상으로 내보내세요.</p>
+</header>
+
+<main class="app">
+  <section class="stage" aria-label="미리보기">
+    <canvas id="film" width="1920" height="1080"></canvas>
+    <div class="transport">
+      <button id="playBtn" class="primary" aria-label="재생/일시정지">⏸ 일시정지</button>
+      <button id="restartBtn" aria-label="처음부터">⟲ 처음부터</button>
+      <span class="time" id="time">0.00s / 0.00s</span>
+      <span class="status" id="status">스페이스바로 재생/일시정지</span>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <fieldset>
+      <legend>장면</legend>
+      <ul class="scenes" id="scenes"></ul>
+      <button class="filebtn wide">+ 이미지 / 영상 추가
+        <input type="file" id="addFiles" accept="image/*,video/*" multiple>
+      </button>
+      <button class="wide" id="resetScenes">샘플 장면으로 되돌리기</button>
+      <p class="tip">첫 장면이 <b>현재</b>, 그 아래가 차례로 <b>회상</b> 장면이에요. 영상은 소리 없이 반복 재생돼요.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>움직임</legend>
+      <div class="row wide-field">
+        <label for="direction">방향</label>
+        <select id="direction">
+          <option value="up" selected>위로 ↑ (회상 기본)</option>
+          <option value="down">아래로 ↓</option>
+          <option value="left">왼쪽으로 ← (레퍼런스처럼)</option>
+          <option value="right">오른쪽으로 →</option>
+        </select>
+      </div>
+      <div class="row wide-field">
+        <label>모드</label>
+        <div class="seg" role="group" aria-label="모드">
+          <button type="button" data-mode="step" aria-pressed="true">한 컷씩 넘김</button>
+          <button type="button" data-mode="scroll" aria-pressed="false">연속 흐름</button>
+        </div>
+      </div>
+      <div class="row">
+        <label for="advanceMs">넘김 시간</label>
+        <input type="range" id="advanceMs" min="60" max="500" step="10" value="120">
+        <output for="advanceMs"></output>
+      </div>
+      <div class="row">
+        <label for="holdMs">유지 시간</label>
+        <input type="range" id="holdMs" min="300" max="6000" step="100" value="1600">
+        <output for="holdMs"></output>
+      </div>
+      <div class="row">
+        <label for="scrollSpeed">흐름 속도</label>
+        <input type="range" id="scrollSpeed" min="0.1" max="3" step="0.05" value="0.5">
+        <output for="scrollSpeed"></output>
+      </div>
+      <label class="check"><input type="checkbox" id="loop" checked> 반복 재생</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>룩</legend>
+      <div class="row">
+        <label for="leak">빛샘</label>
+        <input type="range" id="leak" min="0" max="1.5" step="0.05" value="1">
+        <output for="leak"></output>
+      </div>
+      <div class="row">
+        <label for="grain">그레인·먼지</label>
+        <input type="range" id="grain" min="0" max="1" step="0.05" value="0.5">
+        <output for="grain"></output>
+      </div>
+      <div class="row">
+        <label for="weave">흔들림</label>
+        <input type="range" id="weave" min="0" max="1" step="0.05" value="0.5">
+        <output for="weave"></output>
+      </div>
+      <div class="row">
+        <label for="grade">바랜 색감</label>
+        <input type="range" id="grade" min="0" max="1" step="0.05" value="0.7">
+        <output for="grade"></output>
+      </div>
+      <label class="check"><input type="checkbox" id="sprockets" checked> 스프로켓 홀(필름 구멍) 표시</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>내보내기</legend>
+      <div class="row wide-field">
+        <label for="res">해상도</label>
+        <select id="res">
+          <option value="1920x1080" selected>1920 × 1080 (가로)</option>
+          <option value="1280x720">1280 × 720 (가로)</option>
+          <option value="1080x1920">1080 × 1920 (세로)</option>
+          <option value="1080x1080">1080 × 1080 (정사각)</option>
+        </select>
+      </div>
+      <button class="primary wide" id="recordBtn">● 영상으로 내보내기</button>
+      <button class="wide" id="overlayBtn">필름 오버레이 PNG 저장</button>
+      <p class="tip">영상 내보내기는 장면을 순서대로 <b>한 번</b> 재생한 분량을 실시간으로 녹화해요. 녹화 중에는 이 탭을 그대로 두세요. 브라우저가 지원하면 MP4로, 아니면 WebM으로 저장돼요. 오버레이 PNG는 가운데가 투명한 필름 테두리라서, 편집기 맨 위 트랙에 올려 쓰면 돼요.</p>
+    </fieldset>
+  </aside>
+</main>
+
+<section class="howto">
+  <h2>편집기에서 쓰는 법</h2>
+  <ol>
+    <li>현재 장면 클립과 회상 클립(이미지/영상)을 위 목록에 순서대로 넣어요.</li>
+    <li>유지 시간을 각 회상 컷을 보여줄 길이에 맞추고, 넘김 시간은 100~150ms 정도가 레퍼런스와 비슷해요.</li>
+    <li>내보낸 영상을 타임라인에 올려요. MP4면 어디서나 바로 읽히고, WebM으로 저장됐다면 캡컷·유튜브는 바로 읽지만 프리미어·다빈치 리졸브는 HandBrake 같은 무료 변환기로 MP4로 바꿔서 쓰세요.</li>
+    <li>필름 테두리만 필요하면 오버레이 PNG를 맨 위 트랙에 얹고, 빛샘은 넘기는 순간에 주황색 라이트 리크 소스를 겹치면 같은 느낌이 나요.</li>
+  </ol>
+</section>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, el = document) => el.querySelector(s);
+
+const RES = {
+  '1920x1080': [1920, 1080], '1280x720': [1280, 720],
+  '1080x1920': [1080, 1920], '1080x1080': [1080, 1080],
+};
+
+const state = {
+  w: 1920, h: 1080,
+  direction: 'up', mode: 'step',
+  advanceMs: 120, holdMs: 1600, scrollSpeed: 0.5,
+  leak: 1, grain: 0.5, weave: 0.5, grade: 0.7,
+  sprockets: true, loop: true,
+  playing: true, t: 0,
+  scenes: [],
+};
+let rec = null, recEnd = 0;
+
+const canvas = $('#film');
+const ctx = canvas.getContext('2d', { alpha: false });
+const FILTER_OK = 'filter' in ctx;
+
+// ---------- 유틸
+function mulberry32(seed) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const drift = (t, s) => Math.sin(t * 1.3 + s) * 0.5 + Math.sin(t * 2.9 + s * 1.7) * 0.3 + Math.sin(t * 6.1 + s * 0.3) * 0.2;
+const bell = (x) => (x >= 1 ? 0 : (1 - x * x) ** 2);
+function roundRectPath(g, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.arcTo(x + w, y, x + w, y + r, r);
+  g.lineTo(x + w, y + h - r); g.arcTo(x + w, y + h, x + w - r, y + h, r);
+  g.lineTo(x + r, y + h); g.arcTo(x, y + h, x, y + h - r, r);
+  g.lineTo(x, y + r); g.arcTo(x, y, x + r, y, r); g.closePath();
+}
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+// ---------- 샘플 장면 (캔버스로 그린 그림)
+function caption(g, w, h, text, color = 'rgba(255,255,255,0.88)') {
+  g.save();
+  g.font = '600 34px ui-monospace, Menlo, Consolas, monospace';
+  g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 8;
+  g.fillStyle = color;
+  g.fillText(text, 48, h - 44);
+  g.restore();
+}
+const PAINTERS = {
+  now(g, w, h) {
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#070d22'); sky.addColorStop(0.6, '#1d2a4e'); sky.addColorStop(1, '#4b5570');
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+    const r = mulberry32(7);
+    for (let i = 0; i < 160; i++) { g.fillStyle = `rgba(255,255,255,${0.25 + r() * 0.6})`; g.fillRect(r() * w, r() * h * 0.5, 1.6, 1.6); }
+    g.fillStyle = '#f3ead0'; g.beginPath(); g.arc(w * 0.78, h * 0.2, 44, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#1a2648'; g.beginPath(); g.arc(w * 0.78 + 16, h * 0.2 - 8, 38, 0, Math.PI * 2); g.fill();
+    const rr = mulberry32(21);
+    for (let x = -10; x < w;) {
+      const bw = 36 + rr() * 90, bh = 110 + rr() * 320;
+      g.fillStyle = '#090c17'; g.fillRect(x, h - bh, bw, bh);
+      for (let yy = h - bh + 14; yy < h - 24; yy += 20)
+        for (let xx = x + 7; xx < x + bw - 9; xx += 15)
+          if (rr() < 0.32) { g.fillStyle = `rgba(255,214,130,${0.45 + rr() * 0.5})`; g.fillRect(xx, yy, 7, 9); }
+      x += bw + 5;
+    }
+    g.fillStyle = '#05070d'; g.fillRect(0, h - 36, w, 36);
+    caption(g, w, h, 'NOW');
+  },
+  summer(g, w, h) {
+    const sky = g.createLinearGradient(0, 0, 0, h * 0.75);
+    sky.addColorStop(0, '#5b2f6e'); sky.addColorStop(0.45, '#e9643f'); sky.addColorStop(1, '#ffd27a');
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+    const glow = g.createRadialGradient(w * 0.5, h * 0.6, 10, w * 0.5, h * 0.6, 320);
+    glow.addColorStop(0, 'rgba(255,240,200,0.95)'); glow.addColorStop(0.25, 'rgba(255,200,120,0.5)'); glow.addColorStop(1, 'rgba(255,160,80,0)');
+    g.fillStyle = glow; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#fff3cf'; g.beginPath(); g.arc(w * 0.5, h * 0.6, 70, 0, Math.PI * 2); g.fill();
+    const hills = [['#8a4c3c', 0.62, 90, 1.1], ['#4f2a2c', 0.72, 70, 1.7], ['#241419', 0.84, 50, 2.6]];
+    hills.forEach(([col, base, amp, freq], i) => {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, h);
+      for (let x = 0; x <= w; x += 8) g.lineTo(x, h * base + Math.sin(x / w * Math.PI * freq + i) * amp + Math.sin(x / 90 + i * 3) * 10);
+      g.lineTo(w, h); g.closePath(); g.fill();
+    });
+    g.fillStyle = '#17090c'; g.fillRect(w * 0.2 - 6, h * 0.52, 12, h * 0.2);
+    for (const [dx, dy, rad] of [[0, -20, 55], [-40, 0, 42], [42, 4, 40], [-10, -55, 36], [25, -45, 34]]) {
+      g.beginPath(); g.arc(w * 0.2 + dx, h * 0.52 + dy, rad, 0, Math.PI * 2); g.fill();
+    }
+    caption(g, w, h, 'SUMMER 1998');
+  },
+  sea(g, w, h) {
+    const sky = g.createLinearGradient(0, 0, 0, h * 0.58);
+    sky.addColorStop(0, '#f6cfa0'); sky.addColorStop(1, '#f49a6a');
+    g.fillStyle = sky; g.fillRect(0, 0, w, h * 0.58);
+    const sea = g.createLinearGradient(0, h * 0.58, 0, h);
+    sea.addColorStop(0, '#d7865c'); sea.addColorStop(0.4, '#8f4e48'); sea.addColorStop(1, '#3a2630');
+    g.fillStyle = sea; g.fillRect(0, h * 0.58, w, h * 0.42);
+    g.fillStyle = '#fff4d6'; g.beginPath(); g.arc(w * 0.5, h * 0.5, 62, 0, Math.PI * 2); g.fill();
+    const r = mulberry32(99);
+    for (let i = 0; i < 260; i++) {
+      const y = h * 0.6 + r() * h * 0.35;
+      const x = w * 0.5 + (r() - 0.5) * (120 + (y - h * 0.6) * 1.8);
+      g.fillStyle = `rgba(255,240,200,${0.3 + r() * 0.6})`; g.fillRect(x, y, 6 + r() * 14, 1.5);
+    }
+    g.fillStyle = '#1b1016';
+    for (let i = 0; i < 7; i++) { const x = w * 0.62 + i * 46; g.fillRect(x, h * 0.6, 7, h * 0.14 - i * 6); }
+    g.fillRect(w * 0.62 - 10, h * 0.6 - 8, 7 * 46 + 20, 10);
+    caption(g, w, h, 'THE SEA 1998');
+  },
+  winter(g, w, h) {
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#b9c3cc'); sky.addColorStop(0.55, '#e4e9ec'); sky.addColorStop(1, '#f4f6f7');
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+    const r = mulberry32(5);
+    const rows = [['#5b6c6e', 0.55, 1.0], ['#36484a', 0.68, 1.35], ['#1f2d2f', 0.84, 1.8]];
+    rows.forEach(([col, base, s]) => {
+      g.fillStyle = col;
+      for (let x = -40; x < w + 40; x += 36 * s) {
+        const th = (90 + r() * 70) * s, tw = 34 * s, by = h * base + (r() - 0.5) * 20;
+        g.beginPath(); g.moveTo(x, by); g.lineTo(x + tw / 2, by - th); g.lineTo(x + tw, by); g.closePath(); g.fill();
+      }
+    });
+    g.fillStyle = '#f7f9fa'; g.fillRect(0, h * 0.86, w, h * 0.14);
+    for (let i = 0; i < 220; i++) {
+      g.fillStyle = `rgba(255,255,255,${0.5 + r() * 0.5})`; const s2 = 1.5 + r() * 3;
+      g.beginPath(); g.arc(r() * w, r() * h, s2, 0, Math.PI * 2); g.fill();
+    }
+    caption(g, w, h, 'WINTER 2004', 'rgba(30,40,45,0.85)');
+  },
+};
+function procScene(label, painter) {
+  const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+  painter(c.getContext('2d'), c.width, c.height);
+  return { kind: 'image', label, tag: '샘플', source: c, w: 1280, h: 720 };
+}
+function sampleScenes() {
+  return [
+    procScene('현재 · 도시의 밤', PAINTERS.now),
+    procScene('회상 · 여름 언덕', PAINTERS.summer),
+    procScene('회상 · 바다', PAINTERS.sea),
+    procScene('회상 · 겨울 숲', PAINTERS.winter),
+  ];
+}
+
+// ---------- 노이즈 타일 (그레인)
+const NOISE = [];
+for (let i = 0; i < 4; i++) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'); const img = g.createImageData(256, 256); const d = img.data;
+  const r = mulberry32(100 + i);
+  for (let j = 0; j < d.length; j += 4) { const v = (r() * 255) | 0; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
+  g.putImageData(img, 0, 0); NOISE.push(c);
+}
+
+// ---------- 기하 / 타임라인
+function geometry() {
+  const W = state.w, H = state.h;
+  const vertical = state.direction === 'up' || state.direction === 'down';
+  const rail = state.sprockets ? Math.round(0.058 * Math.min(W, H)) : 0;
+  const axisLen = vertical ? H : W;
+  const holesPerFrame = Math.max(6, Math.round(axisLen / (Math.max(rail, 40) * 0.72)));
+  const pitch = axisLen / holesPerFrame;
+  return { W, H, vertical, rail, axisLen, holesPerFrame, pitch };
+}
+const isLoop = () => state.loop && !rec;
+function cycleMs() {
+  const n = state.scenes.length;
+  if (!n) return 1000;
+  if (state.mode === 'scroll') return n / state.scrollSpeed * 1000;
+  return n * state.holdMs + (isLoop() ? n : n - 1) * state.advanceMs;
+}
+function stripPos(t) {
+  const n = state.scenes.length;
+  if (!n) return 0;
+  if (state.mode === 'scroll') return t / 1000 * state.scrollSpeed;
+  const cyc = cycleMs();
+  const tt = isLoop() ? ((t % cyc) + cyc) % cyc : clamp(t, 0, cyc);
+  const seg = state.holdMs + state.advanceMs;
+  const k = Math.min(Math.floor(tt / seg), n - 1);
+  const local = tt - k * seg;
+  let e = 0;
+  if (local > state.holdMs) { const x = clamp((local - state.holdMs) / state.advanceMs, 0, 1); e = 1 - (1 - x) * (1 - x); }
+  return k + e;
+}
+function boundaryLeak(b, t) {
+  const n = state.scenes.length;
+  if (state.mode === 'scroll') return state.leak * (0.45 + 0.1 * drift(t / 1000 * 3 + b, 2));
+  const loop = isLoop();
+  if (!loop && (b <= 0 || b >= n)) return 0;
+  const seg = state.holdMs + state.advanceMs, cyc = cycleMs();
+  const halfW = state.advanceMs * 0.8 + 110;
+  const tt = loop ? ((t % cyc) + cyc) % cyc : clamp(t, 0, cyc);
+  const c = b * seg - state.advanceMs / 2;
+  let v = bell(Math.abs(tt - c) / halfW);
+  if (loop) v = Math.max(v, bell(Math.abs(tt - c - cyc) / halfW), bell(Math.abs(tt - c + cyc) / halfW));
+  return v * state.leak;
+}
+
+// ---------- 그리기
+function drawScene(g, sc, dx, dy, W, H) {
+  const src = sc.source;
+  const sw = sc.kind === 'video' ? src.videoWidth : sc.w;
+  const sh = sc.kind === 'video' ? src.videoHeight : sc.h;
+  if (!sw || !sh) { g.fillStyle = '#000'; g.fillRect(dx, dy, W, H); return; }
+  const s = Math.max(W / sw, H / sh), dw = sw * s, dh = sh * s;
+  g.save();
+  g.beginPath(); g.rect(dx, dy, W, H); g.clip();
+  if (FILTER_OK && state.grade > 0) {
+    const gr = state.grade;
+    g.filter = `sepia(${(0.32 * gr).toFixed(3)}) saturate(${(1 - 0.22 * gr).toFixed(3)}) contrast(${(1 - 0.07 * gr).toFixed(3)}) brightness(${(1 + 0.03 * gr).toFixed(3)})`;
+  }
+  g.drawImage(src, dx + (W - dw) / 2, dy + (H - dh) / 2, dw, dh);
+  g.restore();
+}
+function drawBoundary(g, geo, q, inten, seed) {
+  const { W, H, vertical, axisLen } = geo;
+  const lineT = Math.max(2, 0.012 * axisLen);
+  g.fillStyle = 'rgba(6,4,2,0.92)';
+  if (vertical) g.fillRect(0, q - lineT / 2, W, lineT); else g.fillRect(q - lineT / 2, 0, lineT, H);
+  if (inten <= 0.004) return;
+  const cross = vertical ? W : H;
+  const rng = mulberry32(seed);
+  const cx = cross * (0.35 + 0.3 * rng());
+  // 넓게 번지는 주황색 빛
+  const bloom = 0.3 * axisLen * (0.8 + 0.4 * inten);
+  g.save(); g.globalCompositeOperation = 'screen';
+  g.translate(vertical ? cx : q, vertical ? q : cx);
+  g.scale(vertical ? cross * 0.9 : bloom, vertical ? bloom : cross * 0.9);
+  const grd = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+  grd.addColorStop(0, `rgba(255,185,70,${clamp(0.9 * inten, 0, 1)})`);
+  grd.addColorStop(0.35, `rgba(255,120,25,${clamp(0.6 * inten, 0, 1)})`);
+  grd.addColorStop(1, 'rgba(255,60,0,0)');
+  g.fillStyle = grd; g.fillRect(-1, -1, 2, 2);
+  g.restore();
+  // 경계 한가운데의 하얗게 타는 띠
+  const coreW = 0.06 * axisLen * (0.6 + 0.6 * inten);
+  g.save(); g.globalCompositeOperation = 'screen';
+  const lg = vertical ? g.createLinearGradient(0, q - coreW, 0, q + coreW) : g.createLinearGradient(q - coreW, 0, q + coreW, 0);
+  lg.addColorStop(0, 'rgba(255,230,150,0)');
+  lg.addColorStop(0.5, `rgba(255,238,175,${clamp(0.95 * inten, 0, 1)})`);
+  lg.addColorStop(1, 'rgba(255,230,150,0)');
+  g.fillStyle = lg;
+  if (vertical) g.fillRect(0, q - coreW, W, 2 * coreW); else g.fillRect(q - coreW, 0, 2 * coreW, H);
+  g.restore();
+}
+function drawFilm(g, geo, p, t, frameIdx) {
+  const { W, H, vertical, axisLen: L } = geo;
+  const n = state.scenes.length;
+  const sign = (state.direction === 'up' || state.direction === 'left') ? 1 : -1;
+  const k = Math.floor(p);
+  const loop = isLoop();
+  for (let f = k - 1; f <= k + 2; f++) {
+    const o = sign * (f - p) * L;
+    if (o <= -L || o >= L) continue;
+    const dx = vertical ? 0 : o, dy = vertical ? o : 0;
+    const outOfRange = state.mode === 'step' && !loop && (f < 0 || f >= n);
+    if (outOfRange || !n) { g.fillStyle = '#000'; g.fillRect(dx, dy, W, H); continue; }
+    drawScene(g, state.scenes[((f % n) + n) % n], dx, dy, W, H);
+  }
+  for (let b = k - 1; b <= k + 2; b++) {
+    const q = sign * (b - p) * L + (sign < 0 ? L : 0);
+    if (q < -0.4 * L || q > 1.4 * L) continue;
+    drawBoundary(g, geo, q, boundaryLeak(b, t), frameIdx * 31 + b * 7);
+  }
+}
+function drawGrade(g, geo) {
+  const gr = state.grade; if (gr <= 0) return;
+  g.save();
+  g.globalCompositeOperation = 'soft-light'; g.fillStyle = `rgba(255,150,60,${0.5 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
+  g.globalCompositeOperation = 'screen'; g.fillStyle = `rgba(70,40,15,${0.35 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
+  g.restore();
+}
+function drawVignette(g, geo) {
+  const { W, H, vertical, rail } = geo;
+  const px = vertical ? rail : 0, py = vertical ? 0 : rail;
+  const pw = vertical ? W - 2 * rail : W, ph = vertical ? H : H - 2 * rail;
+  g.save();
+  g.beginPath(); g.rect(px, py, pw, ph); roundRectPath(g, px, py, pw, ph, 0.025 * Math.min(pw, ph));
+  g.fillStyle = 'rgba(6,4,3,0.9)'; g.fill('evenodd');
+  g.restore();
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,5,2,0.55)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+}
+let railCache = { key: '', canvas: null };
+function railsCanvas(geo) {
+  const key = [geo.W, geo.H, geo.vertical, geo.rail, geo.pitch].join('|');
+  if (railCache.key === key) return railCache.canvas;
+  const { W, H, vertical, rail, pitch, axisLen, holesPerFrame } = geo;
+  const c = document.createElement('canvas');
+  c.width = vertical ? W : axisLen + pitch; c.height = vertical ? axisLen + pitch : H;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(9,7,5,0.94)';
+  if (vertical) { g.fillRect(0, 0, rail, c.height); g.fillRect(W - rail, 0, rail, c.height); }
+  else { g.fillRect(0, 0, c.width, rail); g.fillRect(0, H - rail, c.width, rail); }
+  const across = rail * 0.5, along = rail * 0.46, rr = rail * 0.11;
+  g.shadowColor = 'rgba(255,236,200,0.85)'; g.shadowBlur = rail * 0.2;
+  g.fillStyle = 'rgba(255,250,242,0.94)';
+  const crossLen = vertical ? W : H;
+  for (let i = 0; i <= holesPerFrame; i++) {
+    const c0 = i * pitch + pitch / 2;
+    for (const a0 of [(rail - across) / 2, crossLen - rail + (rail - across) / 2]) {
+      g.beginPath();
+      if (vertical) roundRectPath(g, a0, c0 - along / 2, across, along, rr);
+      else roundRectPath(g, c0 - along / 2, a0, along, across, rr);
+      g.fill();
+    }
+  }
+  railCache = { key, canvas: c };
+  return c;
+}
+function drawRails(g, geo, p, rng) {
+  if (!state.sprockets) return;
+  const { W, H, vertical, rail, pitch, axisLen } = geo;
+  const sign = (state.direction === 'up' || state.direction === 'left') ? 1 : -1;
+  const scroll = (((-sign * p * axisLen) % pitch) + pitch) % pitch;
+  const c = railsCanvas(geo);
+  if (vertical) g.drawImage(c, 0, scroll - pitch); else g.drawImage(c, scroll - pitch, 0);
+  // 레일 안쪽으로 번지는 따뜻한 빛
+  const glowA = 0.10 + 0.05 * rng();
+  const gw = rail * 1.6;
+  g.save(); g.globalCompositeOperation = 'screen';
+  for (const side of [0, 1]) {
+    let grd;
+    if (vertical) { const x0 = side ? W - rail : rail; grd = g.createLinearGradient(x0, 0, side ? x0 - gw : x0 + gw, 0); }
+    else { const y0 = side ? H - rail : rail; grd = g.createLinearGradient(0, y0, 0, side ? y0 - gw : y0 + gw); }
+    grd.addColorStop(0, `rgba(255,220,170,${glowA})`); grd.addColorStop(1, 'rgba(255,220,170,0)');
+    g.fillStyle = grd;
+    if (vertical) g.fillRect(side ? W - rail - gw : rail, 0, gw, H); else g.fillRect(0, side ? H - rail - gw : rail, W, gw);
+  }
+  g.restore();
+}
+function drawGrain(g, geo, frameIdx, rng) {
+  const a = state.grain; if (a <= 0) return;
+  const tile = NOISE[frameIdx % NOISE.length];
+  const sc = 1.5;
+  g.save();
+  g.globalCompositeOperation = 'overlay';
+  g.globalAlpha = 0.3 * a;
+  g.scale(sc, sc);
+  g.translate(-Math.floor(rng() * 256), -Math.floor(rng() * 256));
+  g.fillStyle = g.createPattern(tile, 'repeat');
+  g.fillRect(0, 0, geo.W / sc + 256, geo.H / sc + 256);
+  g.restore();
+}
+function drawDust(g, geo, frameIdx, rng) {
+  const { W, H, vertical } = geo;
+  const amt = state.grain; if (amt <= 0) return;
+  const n = Math.floor(rng() * 4 * amt + 0.5);
+  for (let i = 0; i < n; i++) {
+    const x = rng() * W, y = rng() * H, s = 1 + rng() * 3;
+    g.fillStyle = rng() < 0.5 ? 'rgba(20,10,5,0.7)' : 'rgba(255,250,235,0.8)';
+    g.beginPath(); g.ellipse(x, y, s, s * (0.6 + rng() * 1.5), rng() * 3, 0, Math.PI * 2); g.fill();
+  }
+  if (rng() < 0.12 * amt) {
+    g.strokeStyle = 'rgba(30,15,5,0.55)'; g.lineWidth = 1.2; g.beginPath();
+    let x = rng() * W, y = rng() * H; g.moveTo(x, y);
+    for (let j = 0; j < 4; j++) { x += (rng() - 0.5) * 40; y += (rng() - 0.5) * 40; g.lineTo(x, y); }
+    g.stroke();
+  }
+  // 필름 진행 방향으로 난 긴 스크래치 (몇 프레임 동안 유지)
+  const grp = Math.floor(frameIdx / 14); const gr = mulberry32(grp * 31 + 7);
+  if (gr() < 0.35 * amt + 0.05) {
+    const pos = gr() * (vertical ? W : H); const jitter = (rng() - 0.5) * 3;
+    g.save(); g.globalCompositeOperation = 'screen';
+    g.strokeStyle = `rgba(255,240,210,${0.25 + 0.3 * rng()})`; g.lineWidth = 1 + rng();
+    g.beginPath();
+    if (vertical) { g.moveTo(pos + jitter, 0); g.lineTo(pos + jitter + (rng() - 0.5) * 2, H); }
+    else { g.moveTo(0, pos + jitter); g.lineTo(W, pos + jitter + (rng() - 0.5) * 2); }
+    g.stroke(); g.restore();
+  }
+}
+
+function render(t) {
+  const geo = geometry(); const { W, H } = geo;
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  const frameIdx = Math.floor(t / (1000 / 30));
+  const rng = mulberry32(frameIdx * 7919 + 13);
+  const p = stripPos(t);
+  const g = ctx;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  if (FILTER_OK) g.filter = 'none';
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  // 게이트 흔들림: 그림만 살짝 흔들리고 필름 레일은 고정
+  const ts = t / 1000, wv = state.weave;
+  g.save();
+  g.translate(wv * 0.004 * W * drift(ts, 1), wv * 0.004 * H * drift(ts, 5));
+  drawFilm(g, geo, p, t, frameIdx);
+  g.restore();
+  drawGrade(g, geo);
+  drawVignette(g, geo);
+  drawRails(g, geo, p, rng);
+  drawGrain(g, geo, frameIdx, rng);
+  drawDust(g, geo, frameIdx, rng);
+  // 밝기 깜빡임
+  const fl = wv * (0.03 * rng() + 0.025 * (0.5 + 0.5 * drift(ts * 7, 9)));
+  g.fillStyle = `rgba(0,0,0,${fl})`; g.fillRect(0, 0, W, H);
+}
+
+// ---------- 재생 루프
+const timeEl = $('#time'), statusEl = $('#status'), playBtn = $('#playBtn');
+const fmt = (ms) => (ms / 1000).toFixed(2) + 's';
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(now - last, 100); last = now;
+  if (state.playing) {
+    state.t += dt;
+    const cyc = cycleMs();
+    if (rec && state.t >= recEnd) { state.t = recEnd; render(state.t); stopRecording(); }
+    else if (!isLoop() && state.mode === 'step' && state.t >= cyc) { state.t = cyc; setPlaying(false); }
+    else if (isLoop() && state.t >= cyc) { state.t -= cyc; }
+  }
+  render(state.t);
+  const shown = (isLoop() ? ((state.t % cycleMs()) + cycleMs()) % cycleMs() : state.t);
+  timeEl.textContent = `${fmt(shown)} / ${fmt(cycleMs())}`;
+  requestAnimationFrame(loop);
+}
+function setPlaying(on) {
+  state.playing = on;
+  playBtn.textContent = on ? '⏸ 일시정지' : '▶ 재생';
+  for (const sc of state.scenes) if (sc.kind === 'video') { if (on) sc.source.play().catch(() => {}); else sc.source.pause(); }
+}
+playBtn.addEventListener('click', () => {
+  if (rec) return;
+  if (!state.playing && !isLoop() && state.mode === 'step' && state.t >= cycleMs()) state.t = 0;
+  setPlaying(!state.playing);
+});
+$('#restartBtn').addEventListener('click', () => { if (rec) return; state.t = 0; setPlaying(true); });
+document.addEventListener('mousedown', (e) => { if (e.target.tagName === 'BUTTON') e.preventDefault(); });
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) { e.preventDefault(); playBtn.click(); }
+});
+
+// ---------- 컨트롤 바인딩
+function bindRange(id, format) {
+  const el = $('#' + id), out = $(`output[for="${id}"]`);
+  const upd = () => { state[id] = parseFloat(el.value); out.textContent = format(state[id]); };
+  el.addEventListener('input', upd); upd();
+}
+bindRange('advanceMs', (v) => `${v | 0}ms`);
+bindRange('holdMs', (v) => `${(v / 1000).toFixed(1)}s`);
+bindRange('scrollSpeed', (v) => `${v.toFixed(2)}컷/s`);
+bindRange('leak', (v) => `${Math.round(v * 100)}%`);
+bindRange('grain', (v) => `${Math.round(v * 100)}%`);
+bindRange('weave', (v) => `${Math.round(v * 100)}%`);
+bindRange('grade', (v) => `${Math.round(v * 100)}%`);
+$('#direction').addEventListener('change', (e) => { state.direction = e.target.value; });
+$('#sprockets').addEventListener('change', (e) => { state.sprockets = e.target.checked; });
+$('#loop').addEventListener('change', (e) => { state.loop = e.target.checked; if (state.loop && !state.playing) setPlaying(true); });
+for (const b of document.querySelectorAll('.seg [data-mode]')) {
+  b.addEventListener('click', () => {
+    state.mode = b.dataset.mode; state.t = 0;
+    for (const o of document.querySelectorAll('.seg [data-mode]')) o.setAttribute('aria-pressed', String(o === b));
+    document.querySelectorAll('#advanceMs, #holdMs').forEach((el) => { el.disabled = state.mode === 'scroll'; });
+    $('#scrollSpeed').disabled = state.mode !== 'scroll';
+  });
+}
+$('#scrollSpeed').disabled = true;
+function applyRes() {
+  const [w, h] = RES[$('#res').value];
+  state.w = w; state.h = h;
+  canvas.style.maxWidth = `calc(76vh * ${w} / ${h})`;
+}
+$('#res').addEventListener('change', applyRes);
+applyRes();
+
+// ---------- 장면 목록
+function drawThumb(c, sc) {
+  const g = c.getContext('2d');
+  const src = sc.source;
+  const sw = sc.kind === 'video' ? src.videoWidth : sc.w, sh = sc.kind === 'video' ? src.videoHeight : sc.h;
+  g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+  if (!sw || !sh) return;
+  const s = Math.max(c.width / sw, c.height / sh), dw = sw * s, dh = sh * s;
+  g.drawImage(src, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh);
+}
+function renderSceneList() {
+  const ul = $('#scenes'); ul.innerHTML = '';
+  if (!state.scenes.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = '장면이 없어요. 아래에서 추가해 주세요.'; ul.appendChild(li); return; }
+  state.scenes.forEach((sc, i) => {
+    const li = document.createElement('li'); li.className = 'scene';
+    const th = document.createElement('canvas'); th.width = 144; th.height = 80; drawThumb(th, sc);
+    const info = document.createElement('div');
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = sc.label; name.title = sc.label;
+    const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = (i === 0 ? '현재 장면' : `회상 ${i}`) + ' · ' + sc.tag;
+    info.append(name, tag);
+    const btns = document.createElement('div'); btns.className = 'btns';
+    const actions = [['↑', '위로', () => moveScene(i, -1)], ['↓', '아래로', () => moveScene(i, 1)], ['✕', '삭제', () => removeScene(i)]];
+    for (const [label, title, fn] of actions) {
+      const b = document.createElement('button'); b.className = 'iconbtn'; b.textContent = label; b.title = title; b.setAttribute('aria-label', title);
+      b.addEventListener('click', fn); btns.appendChild(b);
+    }
+    li.append(th, info, btns); ul.appendChild(li);
+  });
+}
+function moveScene(i, d) {
+  const j = i + d; if (j < 0 || j >= state.scenes.length) return;
+  [state.scenes[i], state.scenes[j]] = [state.scenes[j], state.scenes[i]];
+  renderSceneList();
+}
+function removeScene(i) {
+  const [sc] = state.scenes.splice(i, 1);
+  if (sc.kind === 'video') { sc.source.pause(); sc.source.removeAttribute('src'); sc.source.load(); }
+  state.t = Math.min(state.t, cycleMs());
+  renderSceneList();
+}
+$('#addFiles').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files); e.target.value = '';
+  for (const file of files) {
+    if (file.type.startsWith('video/')) {
+      const v = document.createElement('video');
+      v.src = URL.createObjectURL(file); v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
+      const sc = { kind: 'video', label: file.name, tag: '영상', source: v };
+      v.addEventListener('loadeddata', () => { renderSceneList(); if (state.playing) v.play().catch(() => {}); }, { once: true });
+      state.scenes.push(sc);
+    } else if (file.type.startsWith('image/')) {
+      const img = new Image(); img.src = URL.createObjectURL(file);
+      try { await img.decode(); } catch (err) { statusEl.textContent = `${file.name}: 이미지를 읽지 못했어요`; continue; }
+      state.scenes.push({ kind: 'image', label: file.name, tag: '이미지', source: img, w: img.naturalWidth, h: img.naturalHeight });
+    }
+  }
+  renderSceneList();
+});
+$('#resetScenes').addEventListener('click', () => {
+  for (const sc of state.scenes) if (sc.kind === 'video') { sc.source.pause(); sc.source.removeAttribute('src'); sc.source.load(); }
+  state.scenes = sampleScenes(); state.t = 0; renderSceneList();
+});
+
+// ---------- 내보내기
+const recordBtn = $('#recordBtn');
+function stopRecording() { if (rec && rec.state !== 'inactive') rec.stop(); }
+recordBtn.addEventListener('click', () => {
+  if (rec) { stopRecording(); return; }
+  if (!('MediaRecorder' in window) || !canvas.captureStream) { statusEl.textContent = '이 브라우저는 녹화를 지원하지 않아요. Chrome이나 Edge를 써 주세요.'; return; }
+  // H.264 MP4가 되면 그걸로(편집기 호환 최고), 아니면 WebM, 마지막으로 코덱 불명의 MP4
+  const mime = [
+    'video/mp4;codecs=avc1.640028', 'video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1',
+    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4',
+  ].find((m) => MediaRecorder.isTypeSupported(m));
+  if (!mime) { statusEl.textContent = '지원되는 녹화 형식이 없어요. Chrome이나 Edge를 써 주세요.'; return; }
+  const stream = canvas.captureStream(30);
+  const chunks = [];
+  const r = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16_000_000 });
+  r.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  r.onstop = () => {
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    download(new Blob(chunks, { type: mime }), `film-flashback-${state.w}x${state.h}.${ext}`);
+    rec = null; recordBtn.textContent = '● 영상으로 내보내기';
+    statusEl.textContent = ext === 'mp4' ? 'MP4로 저장했어요. 다운로드 폴더를 확인해 주세요.' : 'WebM으로 저장했어요. 프리미어·다빈치에서 안 읽히면 MP4로 변환해 주세요.';
+    setPlaying(true);
+  };
+  rec = r;
+  state.t = 0;
+  recEnd = state.mode === 'scroll' ? Math.max(cycleMs(), 4000) : cycleMs();
+  r.start(250);
+  setPlaying(true);
+  recordBtn.textContent = '■ 녹화 중지';
+  statusEl.textContent = `녹화 중… ${fmt(recEnd)} 분량. 탭을 그대로 두세요.`;
+});
+$('#overlayBtn').addEventListener('click', () => {
+  const geo = geometry();
+  const c = document.createElement('canvas'); c.width = geo.W; c.height = geo.H;
+  const g = c.getContext('2d');
+  drawVignette(g, geo);
+  drawRails(g, geo, 0, mulberry32(1));
+  c.toBlob((b) => { if (b) download(b, `film-overlay-${geo.W}x${geo.H}.png`); }, 'image/png');
+  statusEl.textContent = '오버레이 PNG를 저장했어요.';
+});
+
+// ---------- 시작
+state.scenes = sampleScenes();
+renderSceneList();
+requestAnimationFrame((now) => { last = now; loop(now); });
+
+// 스크립트로 프레임 단위 렌더링할 때 쓰는 훅
+window.__film = { state, render, cycleMs, setPlaying };
+})();
+</script>
+</body>
+</html>
