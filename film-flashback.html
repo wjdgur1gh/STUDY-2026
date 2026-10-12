@@ -163,9 +163,14 @@
         <output for="leak"></output>
       </div>
       <div class="row">
-        <label for="grain">그레인·먼지</label>
+        <label for="grain">그레인</label>
         <input type="range" id="grain" min="0" max="1" step="0.05" value="0.5">
         <output for="grain"></output>
+      </div>
+      <div class="row">
+        <label for="dust">먼지·스크래치</label>
+        <input type="range" id="dust" min="0" max="1" step="0.05" value="0.5">
+        <output for="dust"></output>
       </div>
       <div class="row">
         <label for="weave">흔들림</label>
@@ -176,6 +181,11 @@
         <label for="grade">바랜 색감</label>
         <input type="range" id="grade" min="0" max="1" step="0.05" value="0.7">
         <output for="grade"></output>
+      </div>
+      <div class="row">
+        <label for="holeScale">홀 크기</label>
+        <input type="range" id="holeScale" min="0.6" max="2" step="0.05" value="1">
+        <output for="holeScale"></output>
       </div>
       <label class="check"><input type="checkbox" id="sprockets" checked> 스프로켓 홀(필름 구멍) 표시</label>
     </fieldset>
@@ -222,8 +232,8 @@ const state = {
   w: 1920, h: 1080,
   direction: 'up', mode: 'step',
   advanceMs: 120, holdMs: 1600, scrollSpeed: 0.5,
-  leak: 1, grain: 0.5, weave: 0.5, grade: 0.7,
-  sprockets: true, loop: true,
+  leak: 1, grain: 0.5, dust: 0.5, weave: 0.5, grade: 0.7,
+  sprockets: true, holeScale: 1, loop: true,
   playing: true, t: 0,
   scenes: [],
 };
@@ -374,20 +384,29 @@ function sampleScenes() {
 }
 
 // ---------- 노이즈 타일 (그레인)
-const NOISE = [];
+const NOISE = [], NOISE_ALPHA = [];
 for (let i = 0; i < 4; i++) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
-  const g = c.getContext('2d'); const img = g.createImageData(256, 256); const d = img.data;
+  const ca = document.createElement('canvas'); ca.width = ca.height = 256;
+  const g = c.getContext('2d'), ga = ca.getContext('2d');
+  const img = g.createImageData(256, 256), ima = ga.createImageData(256, 256);
+  const d = img.data, da = ima.data;
   const r = mulberry32(100 + i);
-  for (let j = 0; j < d.length; j += 4) { const v = (r() * 255) | 0; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
+  for (let j = 0; j < d.length; j += 4) {
+    const v = r();
+    d[j] = d[j + 1] = d[j + 2] = (v * 255) | 0; d[j + 3] = 255;
+    // 투명 배경 위에 얹을 때는 밝은 점/어두운 점을 알파로 표현 (일반 합성으로도 그레인처럼 보이게)
+    da[j] = da[j + 1] = da[j + 2] = v > 0.5 ? 255 : 0; da[j + 3] = (Math.abs(v - 0.5) * 2 * 255) | 0;
+  }
   g.putImageData(img, 0, 0); NOISE.push(c);
+  ga.putImageData(ima, 0, 0); NOISE_ALPHA.push(ca);
 }
 
 // ---------- 기하 / 타임라인
 function geometry() {
   const W = state.w, H = state.h;
   const vertical = state.direction === 'up' || state.direction === 'down';
-  const rail = state.sprockets ? Math.round(0.058 * Math.min(W, H)) : 0;
+  const rail = state.sprockets ? Math.round(0.058 * Math.min(W, H) * state.holeScale) : 0;
   const axisLen = vertical ? H : W;
   const holesPerFrame = Math.max(6, Math.round(axisLen / (Math.max(rail, 40) * 0.72)));
   const pitch = axisLen / holesPerFrame;
@@ -474,7 +493,7 @@ function drawBoundary(g, geo, q, inten, seed) {
   if (vertical) g.fillRect(0, q - coreW, W, 2 * coreW); else g.fillRect(q - coreW, 0, 2 * coreW, H);
   g.restore();
 }
-function drawFilm(g, geo, p, t, frameIdx) {
+function drawFilm(g, geo, p, t, frameIdx, transparent) {
   const { W, H, vertical, axisLen: L } = geo;
   const n = state.scenes.length;
   const sign = (state.direction === 'up' || state.direction === 'left') ? 1 : -1;
@@ -483,6 +502,7 @@ function drawFilm(g, geo, p, t, frameIdx) {
   for (let f = k - 1; f <= k + 2; f++) {
     const o = sign * (f - p) * L;
     if (o <= -L || o >= L) continue;
+    if (transparent) continue;
     const dx = vertical ? 0 : o, dy = vertical ? o : 0;
     const outOfRange = state.mode === 'step' && !loop && (f < 0 || f >= n);
     if (outOfRange || !n) { g.fillStyle = '#000'; g.fillRect(dx, dy, W, H); continue; }
@@ -500,6 +520,11 @@ function drawGrade(g, geo) {
   g.globalCompositeOperation = 'soft-light'; g.fillStyle = `rgba(255,150,60,${0.5 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
   g.globalCompositeOperation = 'screen'; g.fillStyle = `rgba(70,40,15,${0.35 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
   g.restore();
+}
+function drawGradeFlat(g, geo) {
+  const gr = state.grade; if (gr <= 0) return;
+  g.fillStyle = `rgba(120,95,70,${0.1 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
+  g.fillStyle = `rgba(255,160,70,${0.06 * gr})`; g.fillRect(0, 0, geo.W, geo.H);
 }
 function drawVignette(g, geo) {
   const { W, H, vertical, rail } = geo;
@@ -524,7 +549,7 @@ function railsCanvas(geo) {
   g.fillStyle = 'rgba(9,7,5,0.94)';
   if (vertical) { g.fillRect(0, 0, rail, c.height); g.fillRect(W - rail, 0, rail, c.height); }
   else { g.fillRect(0, 0, c.width, rail); g.fillRect(0, H - rail, c.width, rail); }
-  const across = rail * 0.5, along = rail * 0.46, rr = rail * 0.11;
+  const across = rail * 0.52, along = rail * 0.48, rr = rail * 0.16;
   g.shadowColor = 'rgba(255,236,200,0.85)'; g.shadowBlur = rail * 0.2;
   g.fillStyle = 'rgba(255,250,242,0.94)';
   const crossLen = vertical ? W : H;
@@ -561,13 +586,13 @@ function drawRails(g, geo, p, rng) {
   }
   g.restore();
 }
-function drawGrain(g, geo, frameIdx, rng) {
+function drawGrain(g, geo, frameIdx, rng, transparent) {
   const a = state.grain; if (a <= 0) return;
-  const tile = NOISE[frameIdx % NOISE.length];
+  const tile = (transparent ? NOISE_ALPHA : NOISE)[frameIdx % NOISE.length];
   const sc = 1.5;
   g.save();
-  g.globalCompositeOperation = 'overlay';
-  g.globalAlpha = 0.3 * a;
+  g.globalCompositeOperation = transparent ? 'source-over' : 'overlay';
+  g.globalAlpha = (transparent ? 0.5 : 0.3) * a;
   g.scale(sc, sc);
   g.translate(-Math.floor(rng() * 256), -Math.floor(rng() * 256));
   g.fillStyle = g.createPattern(tile, 'repeat');
@@ -576,7 +601,7 @@ function drawGrain(g, geo, frameIdx, rng) {
 }
 function drawDust(g, geo, frameIdx, rng) {
   const { W, H, vertical } = geo;
-  const amt = state.grain; if (amt <= 0) return;
+  const amt = state.dust; if (amt <= 0) return;
   const n = Math.floor(rng() * 4 * amt + 0.5);
   for (let i = 0; i < n; i++) {
     const x = rng() * W, y = rng() * H, s = 1 + rng() * 3;
@@ -602,30 +627,42 @@ function drawDust(g, geo, frameIdx, rng) {
   }
 }
 
-function render(t) {
-  const geo = geometry(); const { W, H } = geo;
-  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+// transparent=true면 장면 없이 필름 효과만 투명 배경 위에 그린다 (편집기용 오버레이)
+function paint(g, geo, t, transparent) {
+  const { W, H } = geo;
   const frameIdx = Math.floor(t / (1000 / 30));
   const rng = mulberry32(frameIdx * 7919 + 13);
   const p = stripPos(t);
-  const g = ctx;
   g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
-  if (FILTER_OK) g.filter = 'none';
-  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  if ('filter' in g) g.filter = 'none';
+  if (transparent) g.clearRect(0, 0, W, H); else { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); }
   // 게이트 흔들림: 그림만 살짝 흔들리고 필름 레일은 고정
   const ts = t / 1000, wv = state.weave;
   g.save();
   g.translate(wv * 0.004 * W * drift(ts, 1), wv * 0.004 * H * drift(ts, 5));
-  drawFilm(g, geo, p, t, frameIdx);
+  drawFilm(g, geo, p, t, frameIdx, transparent);
   g.restore();
-  drawGrade(g, geo);
+  if (transparent) drawGradeFlat(g, geo); else drawGrade(g, geo);
   drawVignette(g, geo);
   drawRails(g, geo, p, rng);
-  drawGrain(g, geo, frameIdx, rng);
+  drawGrain(g, geo, frameIdx, rng, transparent);
   drawDust(g, geo, frameIdx, rng);
   // 밝기 깜빡임
   const fl = wv * (0.03 * rng() + 0.025 * (0.5 + 0.5 * drift(ts * 7, 9)));
   g.fillStyle = `rgba(0,0,0,${fl})`; g.fillRect(0, 0, W, H);
+}
+function render(t) {
+  const geo = geometry();
+  if (canvas.width !== geo.W || canvas.height !== geo.H) { canvas.width = geo.W; canvas.height = geo.H; }
+  paint(ctx, geo, t, false);
+}
+let overlayCanvas = null;
+function renderOverlay(t) {
+  const geo = geometry();
+  if (!overlayCanvas) overlayCanvas = document.createElement('canvas');
+  if (overlayCanvas.width !== geo.W || overlayCanvas.height !== geo.H) { overlayCanvas.width = geo.W; overlayCanvas.height = geo.H; }
+  paint(overlayCanvas.getContext('2d'), geo, t, true);
+  return overlayCanvas;
 }
 
 // ---------- 재생 루프
@@ -673,8 +710,10 @@ bindRange('holdMs', (v) => `${(v / 1000).toFixed(1)}s`);
 bindRange('scrollSpeed', (v) => `${v.toFixed(2)}컷/s`);
 bindRange('leak', (v) => `${Math.round(v * 100)}%`);
 bindRange('grain', (v) => `${Math.round(v * 100)}%`);
+bindRange('dust', (v) => `${Math.round(v * 100)}%`);
 bindRange('weave', (v) => `${Math.round(v * 100)}%`);
 bindRange('grade', (v) => `${Math.round(v * 100)}%`);
+bindRange('holeScale', (v) => `${Math.round(v * 100)}%`);
 $('#direction').addEventListener('change', (e) => { state.direction = e.target.value; });
 $('#sprockets').addEventListener('change', (e) => { state.sprockets = e.target.checked; });
 $('#loop').addEventListener('change', (e) => { state.loop = e.target.checked; if (state.loop && !state.playing) setPlaying(true); });
@@ -811,7 +850,7 @@ renderSceneList();
 requestAnimationFrame((now) => { last = now; loop(now); });
 
 // 스크립트로 프레임 단위 렌더링할 때 쓰는 훅
-window.__film = { state, render, cycleMs, setPlaying };
+window.__film = { state, render, renderOverlay, cycleMs, setPlaying };
 })();
 </script>
 </body>
